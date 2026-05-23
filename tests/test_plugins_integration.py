@@ -269,6 +269,7 @@ class TestChatter:
                     "pleasure",
                     "sure thing",
                     "no worries",
+                    "no probs",
                     "problemo",
                     "not at all",
                     "np",
