@@ -38,6 +38,7 @@ BUNDLED: list[str] = [
     "ibid.plugins.geography",
     "ibid.plugins.remind",
     "ibid.plugins.websearch",
+    "ibid.plugins.chatter",
 ]
 
 

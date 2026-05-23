@@ -101,12 +101,50 @@ class TestFactoid:
         replies = [t for _, _, t in src.sent]
         assert any(r == "$100" for r in replies), replies
 
-    async def test_bare_lookup_silent_on_miss(self, bot: BotFixture) -> None:
+    async def test_bare_lookup_silent_on_miss_unique(self, bot: BotFixture) -> None:
         """A bare-key miss must NOT emit 'i don't know' (the ? form does)."""
         _, src = bot
-        await src.inject("!some_unknown_thing_xyz")
+        await src.inject("!asdfqwerzxcv")  # nothing-like-a-known-greeting
         replies = [t for _, _, t in src.sent]
         assert not any("don't know" in r for r in replies), replies
+
+
+class TestChatter:
+    async def test_hi_gets_greeting(self, bot: BotFixture) -> None:
+        from ibid.plugins.chatter import GREETINGS
+
+        _, src = bot
+        await src.inject("!hi")
+        replies = [t for _, _, t in src.sent]
+        # One of the canned greetings should appear in the reply.
+        assert any(any(g in r for g in GREETINGS) for r in replies), replies
+
+    async def test_botsnack_thanks(self, bot: BotFixture) -> None:
+        _, src = bot
+        await src.inject("!botsnack", nick="alice")
+        replies = [t for _, _, t in src.sent]
+        assert any("thanks" in r.lower() or ":)" in r for r in replies), replies
+
+    async def test_thank_you(self, bot: BotFixture) -> None:
+        _, src = bot
+        await src.inject("!thank you")
+        replies = [t for _, _, t in src.sent]
+        # Acceptance set: any of the canned "you're welcome" responses.
+        assert any(
+            any(s in r.lower() for s in ("no problem", "pleasure", "sure thing",
+                                          "no worries", "problemo", "not at all", "np"))
+            for r in replies
+        ), replies
+
+    async def test_chatter_does_not_fire_on_unrelated(self, bot: BotFixture) -> None:
+        _, src = bot
+        await src.inject("!asdf qwer")
+        # No reply at all from chatter (or anything else); the test is that
+        # nothing greeting-like was sent.
+        replies = [t for _, _, t in src.sent]
+        from ibid.plugins.chatter import GREETINGS
+
+        assert not any(any(g in r for g in GREETINGS) for r in replies), replies
 
 
 class TestKarma:
