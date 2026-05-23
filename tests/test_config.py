@@ -53,6 +53,44 @@ def test_unknown_keys_rejected(tmp_path: Path) -> None:
         Config.load(p)
 
 
+def test_env_overrides_discord_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("IBID_DISCORD_TOKEN", "from-env-secret")
+    p = write_toml(tmp_path, "")
+    cfg = Config.load(p)
+    assert cfg.discord is not None
+    assert cfg.discord.token == "from-env-secret"
+
+
+def test_env_overrides_db_url(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("IBID_DB_URL", "sqlite+aiosqlite:////data/ibid.db")
+    p = write_toml(tmp_path, "")
+    cfg = Config.load(p)
+    assert cfg.bot.db_url == "sqlite+aiosqlite:////data/ibid.db"
+
+
+def test_env_token_overrides_toml(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("IBID_DISCORD_TOKEN", "from-env")
+    p = write_toml(
+        tmp_path,
+        """
+[discord]
+token = "from-toml"
+""",
+    )
+    cfg = Config.load(p)
+    assert cfg.discord is not None
+    assert cfg.discord.token == "from-env"
+
+
 def test_invalid_port_rejected(tmp_path: Path) -> None:
     p = write_toml(
         tmp_path,

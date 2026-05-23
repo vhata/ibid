@@ -1,0 +1,25 @@
+.git
+.github
+.venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+build
+dist
+*.egg-info
+
+# Local runtime artefacts and user-owned data.
+ibid.toml
+*.db
+*.db-journal
+*.sql
+spinach-*
+AUDIT.md
+TODO.md
+
+# Legacy tree isn't shipped.
+legacy

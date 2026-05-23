@@ -85,6 +85,49 @@ nick = "ibid"
 token = "your-bot-token-here"
 ```
 
+## Deploying
+
+### fly.io
+
+Edit `fly.toml` — set `app` to a globally unique name and `primary_region`
+to one near you (`fly platform regions` lists the options). Then:
+
+```bash
+fly apps create $YOUR_APP_NAME
+fly volumes create ibid_data --size 1 --region $REGION
+fly secrets set IBID_DISCORD_TOKEN=<your-bot-token>
+fly deploy
+fly logs
+```
+
+The Discord token lives as a fly secret (set via `fly secrets set`), so
+it never touches the repo or the image. SQLite data lives on the
+`ibid_data` volume mounted at `/data`. The `Dockerfile` sets
+`IBID_DB_URL=sqlite+aiosqlite:////data/ibid.db` so the bot uses it
+automatically.
+
+The app is configured with no public HTTP service — the bot only makes
+outbound websocket connections to Discord — so fly.io doesn't assign a
+public IP or charge for the edge proxy.
+
+Set a spending limit in the fly.io dashboard (Settings → Billing) as a
+sanity guard. For a single bot the monthly cost is well under the
+$5/month free allowance.
+
+### Raspberry Pi / VPS
+
+Run the image directly:
+
+```bash
+docker run -d --name ibid --restart=always \
+  -e IBID_DISCORD_TOKEN=<your-bot-token> \
+  -v ibid_data:/data \
+  $YOUR_IMAGE
+```
+
+Or run from source as a systemd service — see `TODO.md` for an
+"add a systemd unit" item that hasn't shipped yet.
+
 ## Importing legacy data
 
 Drop a `mysqldump` of the old ibid schema next to the bot:

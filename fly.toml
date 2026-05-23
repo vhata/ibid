@@ -1,0 +1,42 @@
+# fly.io deployment config for ibid.
+#
+# Quickstart (assumes `flyctl` is installed and `fly auth login` is done):
+#
+#   # 1. Edit `app` and `primary_region` below before deploying.
+#   #    `app` must be globally unique across fly.io.
+#   # 2. Create the app and a persistent volume.
+#   fly apps create ibid-yourname
+#   fly volumes create ibid_data --size 1 --region <region>
+#   # 3. Set the Discord bot token as a secret (never goes in this file).
+#   fly secrets set IBID_DISCORD_TOKEN=<your-bot-token>
+#   # 4. Deploy.
+#   fly deploy
+#   # 5. Tail logs.
+#   fly logs
+#
+# After deploy, `fly scale count 1` ensures exactly one machine is running.
+
+app = "ibid"               # change me — must be globally unique on fly.io
+primary_region = "ams"     # change me — pick a region near you / Discord
+
+[build]
+  dockerfile = "Dockerfile"
+
+# Persistent volume for the SQLite DB. The Dockerfile sets IBID_DB_URL
+# to /data/ibid.db so data survives redeploys and machine restarts.
+[mounts]
+  source      = "ibid_data"
+  destination = "/data"
+
+[env]
+  PYTHONUNBUFFERED = "1"
+
+# Smallest VM tier — plenty for one bot.
+[[vm]]
+  size   = "shared-cpu-1x"
+  memory = "256mb"
+
+# No [http_service] / [[services]] blocks on purpose. The bot holds an
+# outbound websocket to Discord; it has no inbound HTTP. Skipping these
+# means fly doesn't provision an edge proxy or assign a public IP — the
+# app runs as a pure worker, free of the public-IP fee.
