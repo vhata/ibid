@@ -25,8 +25,13 @@ Faithful port of the legacy ibid ``factoid`` plugin's command surface:
     - ``search Y`` — substring search across stored values
     - ``last set factoid`` — name of the most recently created factoid
 
-Wildcard / ``$arg``-style factoids from the legacy schema aren't ported —
-those need runtime pattern matching that's outside this round's scope.
+  - **Wildcards** — names containing ``$arg`` placeholders. Each ``$arg``
+    matches an arbitrary non-empty string at lookup time; the captured
+    groups are then substituted back into the value as ``$arg`` (first),
+    ``$arg2`` (second), ``$arg3`` (third), and so on. ``$who`` /
+    ``$channel`` etc. also resolve.
+
+      ``remember tell $arg about $arg is <action> tells $arg something about $arg2``
 """
 
 from __future__ import annotations
@@ -36,7 +41,7 @@ import re
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, String, Text, func, select
+from sqlalchemy import Boolean, ForeignKey, String, Text, func, select
 from sqlalchemy.orm import Mapped, mapped_column, relationship, selectinload
 
 from ibid.db import Base
@@ -58,6 +63,9 @@ class Factoid(Base):
     __tablename__ = "factoid"
     id: Mapped[int] = mapped_column(primary_key=True)
     key: Mapped[str] = mapped_column(String(200), unique=True, index=True)
+    # True if the key contains $arg placeholders — used as a fast filter
+    # so the lookup scan only walks wildcard factoids when it needs to.
+    is_wildcard: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
     values: Mapped[list[FactoidValue]] = relationship(
@@ -169,14 +177,33 @@ def _strip_name(name: str) -> str:
     return m.group(1) if m else name
 
 
+_VERB_PREFIX_RE = re.compile(r"^(<reply>|<action>)\s*", re.IGNORECASE)
+
+
+def _extract_verb_prefix(verb: str, value: str) -> tuple[str, str]:
+    """If ``value`` starts with ``<reply>`` or ``<action>``, promote it.
+
+    The legacy bot let users override the natural verb by prefixing the
+    value: ``remember sky is <reply>blue`` stores verb=``<reply>`` and
+    value=``blue``, so the lookup just says "blue" instead of "sky is blue".
+    """
+    m = _VERB_PREFIX_RE.match(value)
+    if m is None:
+        return verb, value
+    return m.group(1).lower(), value[m.end() :]
+
+
 # Match ``$word`` placeholders (not ``$<digit>`` — those are factoid content).
 _PLACEHOLDER_RE = re.compile(r"\$([A-Za-z_]\w*)")
 
 
-def _substitute(value: str, event: Event) -> str:
-    """Replace known legacy placeholders (``$who``, ``$channel``, ...).
+def _substitute(value: str, event: Event, args: tuple[str, ...] = ()) -> str:
+    """Replace known legacy placeholders.
 
-    Unknown ``$name`` tokens are left as-is.
+    Handles ``$who``, ``$channel``, time/date tokens, ``$random``, and the
+    wildcard backreferences ``$arg`` (first capture), ``$arg2`` (second),
+    ``$arg3`` and so on. Unknown ``$name`` tokens are left as-is so a real
+    dollar amount like ``$100`` survives.
     """
     if "$" not in value:
         return value
@@ -209,6 +236,14 @@ def _substitute(value: str, event: Event) -> str:
             return str(int(now.timestamp()))
         if name_lower == "random":
             return str(random.randint(0, 99))
+        # Wildcard backrefs. ``$arg`` (no number) = first capture; ``$arg2``,
+        # ``$arg3``, ... = positional captures.
+        if name_lower == "arg" and args:
+            return args[0]
+        if name_lower.startswith("arg") and name_lower[3:].isdigit():
+            n = int(name_lower[3:]) - 1
+            if 0 <= n < len(args):
+                return args[n]
         return None
 
     def replace(match: re.Match[str]) -> str:
@@ -218,28 +253,87 @@ def _substitute(value: str, event: Event) -> str:
     return _PLACEHOLDER_RE.sub(replace, value)
 
 
-async def _resolve(sess, key: str) -> Factoid | None:  # type: ignore[no-untyped-def]
-    """Find a Factoid by key, falling through aliases."""
+# Cached compiled patterns for wildcard factoids. Cleared when a wildcard
+# factoid is created or deleted (rare events).
+_WILDCARD_CACHE: dict[str, re.Pattern[str]] = {}
+
+
+def _is_wildcard_key(key: str) -> bool:
+    """True if a factoid name contains ``$arg`` placeholders."""
+    return "$arg" in key
+
+
+def _compile_wildcard(key: str) -> re.Pattern[str]:
+    """Compile a wildcard key like ``tell $arg about $arg`` into a regex."""
+    cached = _WILDCARD_CACHE.get(key)
+    if cached is not None:
+        return cached
+    parts = key.split("$arg")
+    pattern = "(.+?)".join(re.escape(p) for p in parts)
+    compiled = re.compile("^" + pattern + "$", re.IGNORECASE | re.DOTALL)
+    _WILDCARD_CACHE[key] = compiled
+    return compiled
+
+
+def _invalidate_wildcard_cache(key: str | None = None) -> None:
+    if key is None:
+        _WILDCARD_CACHE.clear()
+    else:
+        _WILDCARD_CACHE.pop(key, None)
+
+
+async def _resolve(  # type: ignore[no-untyped-def]
+    sess,
+    key: str,
+    *,
+    try_wildcards: bool = True,
+) -> tuple[Factoid | None, tuple[str, ...]]:
+    """Find a Factoid matching ``key``, with the wildcard args (if any).
+
+    Lookup order: exact ``Factoid.key`` → ``FactoidAlias.alias`` → wildcard
+    scan (only when ``try_wildcards`` is set). Returns ``(fact, args)``
+    where ``args`` is the tuple of captured wildcard groups, empty for
+    exact/alias hits.
+    """
     fact: Factoid | None = (
         await sess.execute(
             select(Factoid).options(selectinload(Factoid.values)).where(Factoid.key == key)
         )
     ).scalar_one_or_none()
     if fact is not None:
-        return fact
+        return fact, ()
     alias: FactoidAlias | None = (
         await sess.execute(select(FactoidAlias).where(FactoidAlias.alias == key))
     ).scalar_one_or_none()
-    if alias is None:
-        return None
-    via_alias: Factoid | None = (
-        await sess.execute(
-            select(Factoid)
-            .options(selectinload(Factoid.values))
-            .where(Factoid.id == alias.factoid_id)
+    if alias is not None:
+        via_alias: Factoid | None = (
+            await sess.execute(
+                select(Factoid)
+                .options(selectinload(Factoid.values))
+                .where(Factoid.id == alias.factoid_id)
+            )
+        ).scalar_one_or_none()
+        if via_alias is not None:
+            return via_alias, ()
+    if not try_wildcards:
+        return None, ()
+    # Walk every wildcard factoid and try to match.
+    wilds = (
+        (
+            await sess.execute(
+                select(Factoid)
+                .options(selectinload(Factoid.values))
+                .where(Factoid.is_wildcard.is_(True))
+            )
         )
-    ).scalar_one_or_none()
-    return via_alias
+        .scalars()
+        .all()
+    )
+    for wild in wilds:
+        m = _compile_wildcard(wild.key).match(key)
+        if m is not None:
+            return wild, tuple(m.groups())
+    return None, ()
 
 
 def _select_values(
@@ -339,12 +433,18 @@ class Factoids(Plugin):
         if not key or not value.strip():
             await event.reply("can't remember nothing")
             return
+        verb, value = _extract_verb_prefix(verb, value.strip())
+        wildcard = _is_wildcard_key(key)
         async with event.bot.db.session() as sess:
-            fact = await _resolve(sess, key)
+            # Look up by exact key — never via the wildcard scan, since we're
+            # creating/editing a named factoid, not invoking one.
+            fact, _ = await _resolve(sess, key, try_wildcards=False)
             if fact is None:
-                fact = Factoid(key=key, values=[])
+                fact = Factoid(key=key, is_wildcard=wildcard, values=[])
                 sess.add(fact)
                 await sess.flush()
+                if wildcard:
+                    _invalidate_wildcard_cache()
             else:
                 if correction:
                     for v in list(fact.values):
@@ -390,11 +490,11 @@ class Factoids(Plugin):
             await event.reply("that makes no sense, they *are* the same")
             return
         async with event.bot.db.session() as sess:
-            source_fact = await _resolve(sess, source)
+            source_fact, _ = await _resolve(sess, source, try_wildcards=False)
             if source_fact is None:
                 await event.reply(f"i don't know about {source}")
                 return
-            existing = await _resolve(sess, target)
+            existing, _ = await _resolve(sess, target, try_wildcards=False)
             if existing is not None:
                 await event.reply(f"i already know stuff about {target}")
                 return
@@ -405,21 +505,25 @@ class Factoids(Plugin):
 
     @match(r"\?+\s*$", addressed=True)
     async def lookup(self, event: Event, _m: re.Match[str]) -> None:
-        """X? — explicit lookup ("i don't know" on miss)."""
+        """X? — explicit lookup ("i don't know" on miss). Tries wildcards."""
         m = _LOOKUP_RE.match(event.text)
         if m is None:
             return
         key = _norm(m.group("key"))
         async with event.bot.db.session() as sess:
-            fact = await _resolve(sess, key)
+            fact, args = await _resolve(sess, key)
             if fact is None or not fact.values:
                 await event.reply(f"i don't know about {key!r}")
                 return
-            await self._respond(event, key, fact)
+            await self._respond(event, key, fact, args)
 
     @always(addressed=True)
     async def bare_lookup(self, event: Event) -> None:
-        """Addressed bare key — silent on miss (legacy ibid's voice)."""
+        """Addressed bare key — silent on miss (legacy ibid's voice).
+
+        Also tries wildcards: ``tell alice about cats`` finds a stored
+        ``tell $arg about $arg`` and substitutes the captures.
+        """
         text = event.text.strip()
         if not text or text.endswith("?") or "=" in text or "~=" in text or "+=" in text:
             return
@@ -432,14 +536,24 @@ class Factoids(Plugin):
         if len(key) < 2:
             return
         async with event.bot.db.session() as sess:
-            fact = await _resolve(sess, key)
+            fact, args = await _resolve(sess, key)
             if fact is None or not fact.values:
                 return
-            await self._respond(event, key, fact)
+            # For wildcard hits, the reported key (used in the verb-form
+            # reply) is the *input* that matched, not the template name —
+            # so "sky is blue" reads naturally, not "tell $arg about $arg".
+            display_key = key if fact.is_wildcard else (fact.key if key == fact.key else key)
+            await self._respond(event, display_key, fact, args)
 
-    async def _respond(self, event: Event, key: str, fact: Factoid) -> None:
+    async def _respond(
+        self,
+        event: Event,
+        key: str,
+        fact: Factoid,
+        args: tuple[str, ...] = (),
+    ) -> None:
         value = random.choice(list(fact.values))
-        text = _substitute(value.value, event)
+        text = _substitute(value.value, event, args)
         verb = value.verb
         if verb == "<reply>":
             await event.reply(text, address=False)
@@ -459,7 +573,7 @@ class Factoids(Plugin):
             return
         key = _norm(m.group("key"))
         async with event.bot.db.session() as sess:
-            fact = await _resolve(sess, key)
+            fact, _ = await _resolve(sess, key, try_wildcards=False)
             if fact is None:
                 await event.reply(f"i don't know about {key}")
                 return
@@ -486,13 +600,15 @@ class Factoids(Plugin):
             return
         key = _norm(m.group("key"))
         async with event.bot.db.session() as sess:
-            fact = await _resolve(sess, key)
+            fact, _ = await _resolve(sess, key, try_wildcards=False)
             if fact is None:
                 await event.reply(f"i didn't know about {key} anyway")
                 return
             values = _select_values(fact, m.group("idx"), m.group("pat"), m.group("r"))
             if m.group("idx") is None and m.group("pat") is None:
                 # Drop the whole factoid.
+                if fact.is_wildcard:
+                    _invalidate_wildcard_cache(fact.key)
                 await sess.delete(fact)
                 await event.reply(f"forgotten {key}")
                 return
@@ -516,7 +632,7 @@ class Factoids(Plugin):
         """X [#n | /pat/[r]] += text — append text to one value."""
         key = _norm(m.group("key"))
         async with event.bot.db.session() as sess:
-            fact = await _resolve(sess, key)
+            fact, _ = await _resolve(sess, key, try_wildcards=False)
             if fact is None:
                 await event.reply(f"i don't know about {key}")
                 return
@@ -542,7 +658,7 @@ class Factoids(Plugin):
             await event.reply("that operation makes no sense. try s/foo/bar/")
             return
         async with event.bot.db.session() as sess:
-            fact = await _resolve(sess, key)
+            fact, _ = await _resolve(sess, key, try_wildcards=False)
             if fact is None:
                 await event.reply(f"i don't know about {key}")
                 return
