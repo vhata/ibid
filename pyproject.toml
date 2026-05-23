@@ -26,6 +26,7 @@ classifiers = [
     "Topic :: Communications :: Chat :: Internet Relay Chat",
 ]
 dependencies = [
+    "certifi>=2024.2",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "sqlalchemy[asyncio]>=2.0",
