@@ -30,10 +30,12 @@ class Bot:
 
     async def setup(self) -> None:
         """Wire plugins, sources, and the DB schema. Must run before :meth:`run`."""
+        # Load plugins first so their models are registered against ``Base``,
+        # then create the schema so per-plugin ``setup()`` can hit the DB.
         self.plugins = load_plugins(self, self.config.plugins.disabled)
+        await self.db.create_all()
         for plugin in self.plugins:
             await plugin.setup()
-        await self.db.create_all()
 
         for net in self.config.networks:
             self.sources.append(IRCSource(net, self))
@@ -46,6 +48,13 @@ class Bot:
 
         if not self.sources:
             log.warning("no sources configured — bot will start but won't connect anywhere")
+
+    def get_source(self, name: str) -> Source | None:
+        """Return the source named ``name`` if it's attached, else ``None``."""
+        for s in self.sources:
+            if s.name == name:
+                return s
+        return None
 
     async def dispatch(self, event: Event) -> None:
         """Run an event through every loaded plugin's handlers."""

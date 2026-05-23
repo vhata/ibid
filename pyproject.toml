@@ -34,6 +34,11 @@ dependencies = [
     "selectolax>=0.3.21",
     "tomli; python_version<'3.11'",
     "discord.py>=2.4",
+    "pyfiglet>=1.0",
+    "pint>=0.24",
+    "geopy>=2.4",
+    "dateparser>=1.2",
+    "timezonefinder>=6.4",
 ]
 
 [project.optional-dependencies]
@@ -93,8 +98,10 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["B011"]
-# fetch_title's ``timeout`` is a config knob applied via httpx, not a deadline.
+# ``timeout`` here is a config knob plumbed to httpx, not an asyncio deadline.
 "src/ibid/plugins/urlinfo.py" = ["ASYNC109"]
+"src/ibid/plugins/convert.py" = ["ASYNC109"]
+"src/ibid/plugins/websearch.py" = ["ASYNC109"]
 
 [tool.mypy]
 python_version = "3.12"
@@ -104,8 +111,24 @@ warn_unused_ignores = true
 exclude = ["legacy/"]
 
 [[tool.mypy.overrides]]
-module = ["selectolax.*", "discord", "discord.*"]
+module = [
+    "selectolax.*",
+    "discord",
+    "discord.*",
+    "pyfiglet",
+    "pyfiglet.*",
+    "geopy",
+    "geopy.*",
+    "timezonefinder",
+    "timezonefinder.*",
+    "pint",
+    "pint.*",
+]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["ibid.plugins.ascii"]
+disallow_untyped_calls = false  # pyfiglet's FigletFont.getFonts() isn't typed
 
 
 [tool.pytest.ini_options]
