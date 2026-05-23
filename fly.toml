@@ -17,7 +17,7 @@
 # After deploy, `fly scale count 1` ensures exactly one machine is running.
 
 app = "ibid"               # change me — must be globally unique on fly.io
-primary_region = "ams"     # change me — pick a region near you / Discord
+primary_region = "iad"     # change me — pick a region near you / Discord
 
 [build]
   dockerfile = "Dockerfile"
