@@ -30,6 +30,14 @@ BUNDLED: list[str] = [
     "ibid.plugins.calc",
     "ibid.plugins.choose",
     "ibid.plugins.urlinfo",
+    "ibid.plugins.strings",
+    "ibid.plugins.ascii",
+    "ibid.plugins.insult",
+    "ibid.plugins.quotes",
+    "ibid.plugins.convert",
+    "ibid.plugins.geography",
+    "ibid.plugins.remind",
+    "ibid.plugins.websearch",
 ]
 
 
