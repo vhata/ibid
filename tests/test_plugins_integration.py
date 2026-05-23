@@ -101,6 +101,105 @@ class TestFactoid:
         replies = [t for _, _, t in src.sent]
         assert any(r == "$100" for r in replies), replies
 
+    async def test_is_errors_on_existing_factoid(self, bot: BotFixture) -> None:
+        _, src = bot
+        await src.inject("!remember sky is blue")
+        src.sent.clear()
+        # Re-asserting without "also" should error like the legacy bot.
+        await src.inject("!sky is azure")
+        replies = [t for _, _, t in src.sent]
+        assert any("already know" in r for r in replies), replies
+
+    async def test_also_appends(self, bot: BotFixture) -> None:
+        _, src = bot
+        await src.inject("!remember sky is blue")
+        await src.inject("!sky is also grey at night")
+        src.sent.clear()
+        await src.inject("!literal sky")
+        replies = [t for _, _, t in src.sent]
+        joined = " ".join(replies)
+        assert "blue" in joined and "grey at night" in joined, replies
+
+    async def test_no_correction_replaces(self, bot: BotFixture) -> None:
+        _, src = bot
+        await src.inject("!remember sky is blue")
+        await src.inject("!sky is also grey")
+        await src.inject("!no, sky is purple")
+        src.sent.clear()
+        await src.inject("!literal sky")
+        replies = [t for _, _, t in src.sent]
+        joined = " ".join(replies)
+        assert "purple" in joined and "blue" not in joined and "grey" not in joined, replies
+
+    async def test_alias(self, bot: BotFixture) -> None:
+        _, src = bot
+        await src.inject("!remember sky is blue")
+        await src.inject("!heavens is the same as sky")
+        src.sent.clear()
+        await src.inject("!heavens?")
+        replies = [t for _, _, t in src.sent]
+        assert any("blue" in r for r in replies), replies
+
+    async def test_alias_shares_updates(self, bot: BotFixture) -> None:
+        _, src = bot
+        await src.inject("!remember sky is blue")
+        await src.inject("!heavens is the same as sky")
+        # Now add a value via the original — alias should see it.
+        await src.inject("!sky is also clear")
+        src.sent.clear()
+        await src.inject("!literal heavens")
+        replies = [t for _, _, t in src.sent]
+        joined = " ".join(replies)
+        assert "blue" in joined and "clear" in joined, replies
+
+    async def test_forget_by_pattern(self, bot: BotFixture) -> None:
+        _, src = bot
+        await src.inject("!remember sky is blue")
+        await src.inject("!sky is also clouded")
+        await src.inject("!forget sky /clouded/")
+        src.sent.clear()
+        await src.inject("!literal sky")
+        replies = [t for _, _, t in src.sent]
+        joined = " ".join(replies)
+        assert "clouded" not in joined and "blue" in joined, replies
+
+    async def test_append_to_value(self, bot: BotFixture) -> None:
+        _, src = bot
+        await src.inject("!remember sky is blue")
+        # The legacy ibid appends the suffix verbatim — what's after the `=`
+        # in `+=` lands in the stored value as-is, leading space and all.
+        await src.inject("!sky #1 += and grey")
+        src.sent.clear()
+        await src.inject("!sky?")
+        replies = [t for _, _, t in src.sent]
+        assert any("blue and grey" in r for r in replies), replies
+
+    async def test_substitute_value(self, bot: BotFixture) -> None:
+        _, src = bot
+        await src.inject("!remember sky is blue")
+        await src.inject("!sky #1 ~= s/blue/green/")
+        src.sent.clear()
+        await src.inject("!sky?")
+        replies = [t for _, _, t in src.sent]
+        assert any("green" in r for r in replies), replies
+
+    async def test_translate_value(self, bot: BotFixture) -> None:
+        _, src = bot
+        await src.inject("!remember mood is happy")
+        await src.inject("!mood #1 ~= y/happy/HAPPY/")
+        src.sent.clear()
+        await src.inject("!mood?")
+        replies = [t for _, _, t in src.sent]
+        assert any("HAPPY" in r for r in replies), replies
+
+    async def test_last_set_factoid(self, bot: BotFixture) -> None:
+        _, src = bot
+        await src.inject("!remember sky is blue")
+        src.sent.clear()
+        await src.inject("!last set factoid")
+        replies = [t for _, _, t in src.sent]
+        assert any("sky" in r for r in replies), replies
+
     async def test_bare_lookup_silent_on_miss_unique(self, bot: BotFixture) -> None:
         """A bare-key miss must NOT emit 'i don't know' (the ? form does)."""
         _, src = bot
@@ -123,7 +222,10 @@ class TestChatter:
         _, src = bot
         await src.inject("!botsnack", nick="alice")
         replies = [t for _, _, t in src.sent]
-        assert any("thanks" in r.lower() or ":)" in r for r in replies), replies
+        # One of the three canned reward replies.
+        assert any(any(s in r.lower() for s in ("thanks", "thankyou", ":)")) for r in replies), (
+            replies
+        )
 
     async def test_thank_you(self, bot: BotFixture) -> None:
         _, src = bot
@@ -131,8 +233,18 @@ class TestChatter:
         replies = [t for _, _, t in src.sent]
         # Acceptance set: any of the canned "you're welcome" responses.
         assert any(
-            any(s in r.lower() for s in ("no problem", "pleasure", "sure thing",
-                                          "no worries", "problemo", "not at all", "np"))
+            any(
+                s in r.lower()
+                for s in (
+                    "no problem",
+                    "pleasure",
+                    "sure thing",
+                    "no worries",
+                    "problemo",
+                    "not at all",
+                    "np",
+                )
+            )
             for r in replies
         ), replies
 

@@ -26,21 +26,49 @@ if TYPE_CHECKING:
 # The original ibid set. Ordered roughly by likelihood so the bot's voice
 # stays varied — "hi" gets a different rotation each time.
 GREETINGS = (
-    "lo", "ello", "hello", "hi", "hi there", "howdy", "hey", "heya",
-    "hiya", "hola", "salut", "bonjour", "sup", "wussup", "hoezit",
-    "wotcha", "wotcher", "yo", "word", "good day", "wasup", "wassup",
-    "howzit", "howsit", "buon giorno", "hoe lyk it", "hoe gaan dit",
-    "good morning", "morning", "afternoon", "evening",
+    "lo",
+    "ello",
+    "hello",
+    "hi",
+    "hi there",
+    "howdy",
+    "hey",
+    "heya",
+    "hiya",
+    "hola",
+    "salut",
+    "bonjour",
+    "sup",
+    "wussup",
+    "hoezit",
+    "wotcha",
+    "wotcher",
+    "yo",
+    "word",
+    "good day",
+    "wasup",
+    "wassup",
+    "howzit",
+    "howsit",
+    "buon giorno",
+    "hoe lyk it",
+    "hoe gaan dit",
+    "good morning",
+    "morning",
+    "afternoon",
+    "evening",
 )
 
 # Build a single regex covering every greeting plus its space-stripped form
 # (so "good morning" matches "goodmorning" too).
 _GREETING_ALTS = sorted(
     {*GREETINGS, *(g.replace(" ", "") for g in GREETINGS if " " in g)},
-    key=len, reverse=True,  # longest-match-first
+    key=len,
+    reverse=True,  # longest-match-first
 )
-_GREETING_RE = re.compile(r"\b(" + "|".join(re.escape(g) for g in _GREETING_ALTS) + r")\b",
-                          re.IGNORECASE)
+_GREETING_RE = re.compile(
+    r"\b(" + "|".join(re.escape(g) for g in _GREETING_ALTS) + r")\b", re.IGNORECASE
+)
 
 
 RULES: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
@@ -64,9 +92,14 @@ RULES: tuple[tuple[re.Pattern[str], tuple[str, ...]], ...] = (
     (
         re.compile(r"\bthank(s|\s*you)\b|^\s*ta\s*$|^\s*shot\s*$", re.IGNORECASE),
         (
-            "no problem, $who", "$who: my pleasure", "sure thing, $who",
-            "no worries, $who", "$who: np", "no probs, $who",
-            "$who: no problemo", "$who: not at all",
+            "no problem, $who",
+            "$who: my pleasure",
+            "sure thing, $who",
+            "no worries, $who",
+            "$who: np",
+            "no probs, $who",
+            "$who: no problemo",
+            "$who: not at all",
         ),
     ),
     # Criticism — "bad bot", "stupid bot", "botsmack" / "botslap"
