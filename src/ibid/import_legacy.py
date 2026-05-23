@@ -233,40 +233,71 @@ async def run_import(dump: Path, db_url: str, *, network: str = "legacy") -> dic
         identity_source[int(ident_id)] = str(source)
 
     # ---- factoids
-    # name -> factoid_id
-    name_for_factoid: dict[int, str] = {}
+    #
+    # Legacy schema lets a factoid_id carry multiple names ("hi"/"hello"/"hey"
+    # all pointing at one factoid) and the same name show up against
+    # multiple factoid_ids (different factoids that happened to collide).
+    # The new schema has one Factoid per unique key, so we accumulate the
+    # full value-set per name across every factoid_id that name appears in.
+
+    # name (lowercased) -> set of factoid_ids that carry this name
+    factoid_ids_for_name: dict[str, set[int]] = {}
+    # factoid_id -> earliest creation time (used as the new Factoid's created_at)
+    earliest_for_factoid: dict[int, datetime] = {}
     for row in iter_table_rows(dump, "factoid_names"):
         # (id, name, factoid_id, identity_id, time, factpack, wild)
-        _, name, factoid_id, *_ = row
-        # The legacy schema stored multiple names per factoid; we use the
-        # first one we see (good enough for lookups and avoids collisions).
-        if int(factoid_id) not in name_for_factoid:
-            name_for_factoid[int(factoid_id)] = str(name).strip().lower()
+        _, name, factoid_id, _identity_id, time_raw, _factpack, *_rest = row
+        if name is None:
+            continue
+        key = str(name).strip().lower()[:200]
+        if not key:
+            continue
+        # Skip wild-pattern names (``_%``) — those need runtime substitution
+        # that the new schema doesn't model.
+        if "_%" in key or "%" in key.replace(r"\%", ""):
+            continue
+        fid = int(factoid_id)
+        factoid_ids_for_name.setdefault(key, set()).add(fid)
+        t = _parse_dt(time_raw)
+        if fid not in earliest_for_factoid or t < earliest_for_factoid[fid]:
+            earliest_for_factoid[fid] = t
 
+    # factoid_id -> [(verb, value, author, time)]
     factoid_values_by_id: dict[int, list[tuple[str, str, str | None, datetime]]] = {}
     for row in iter_table_rows(dump, "factoid_values"):
         # (id, value, factoid_id, identity_id, time, factpack)
         _, value, factoid_id, identity_id, time_raw, _factpack = row
+        if value is None:
+            continue
         verb, val = _split_verb(str(value))
+        if not val.strip():
+            continue
         author = identity_nick.get(int(identity_id)) if identity_id is not None else None
         factoid_values_by_id.setdefault(int(factoid_id), []).append(
             (verb, val, author, _parse_dt(time_raw)),
         )
 
     async with db.session() as sess:
-        seen_keys: set[str] = set()
-        for fid, values in factoid_values_by_id.items():
-            key = name_for_factoid.get(fid)
-            if not key or not key.strip():
+        for key, fids in factoid_ids_for_name.items():
+            # Merge all values from every factoid_id that carries this name.
+            merged: list[tuple[str, str, str | None, datetime]] = []
+            for fid in fids:
+                merged.extend(factoid_values_by_id.get(fid, []))
+            if not merged:
                 continue
-            key = key.strip()[:200]
-            if key in seen_keys:
-                continue
-            seen_keys.add(key)
-            fact = Factoid(key=key, created_at=values[0][3])
-            for verb, val, author, t in values:
-                if not val.strip():
+            # Deduplicate identical (verb, value) pairs so synonyms-of-the-same-
+            # factoid don't get the value entered twice.
+            seen_pairs: set[tuple[str, str]] = set()
+            unique: list[tuple[str, str, str | None, datetime]] = []
+            for entry in merged:
+                pair = (entry[0], entry[1].strip().lower())
+                if pair in seen_pairs:
                     continue
+                seen_pairs.add(pair)
+                unique.append(entry)
+            earliest = min(earliest_for_factoid.get(fid, unique[0][3]) for fid in fids)
+            fact = Factoid(key=key, created_at=earliest, values=[])
+            for verb, val, author, t in unique:
                 fact.values.append(
                     FactoidValue(
                         verb=verb[:16],
@@ -276,8 +307,6 @@ async def run_import(dump: Path, db_url: str, *, network: str = "legacy") -> dic
                         created_at=t,
                     )
                 )
-            if not fact.values:
-                continue
             sess.add(fact)
             stats["factoids"] += 1
 
@@ -330,16 +359,16 @@ async def run_import(dump: Path, db_url: str, *, network: str = "legacy") -> dic
             seen_latest[int(ident_id)] = (str(channel or ""), str(value or ""), t)
 
     async with db.session() as sess:
-        seen_pairs: set[tuple[str, str]] = set()
+        seen_seen_pairs: set[tuple[str, str]] = set()
         for ident_id, (chan, text, t) in seen_latest.items():
             nick = identity_nick.get(ident_id)
             if nick is None:
                 continue
             src = identity_source.get(ident_id, network)
             pair = (src, nick.lower())
-            if pair in seen_pairs:
+            if pair in seen_seen_pairs:
                 continue
-            seen_pairs.add(pair)
+            seen_seen_pairs.add(pair)
             sess.add(
                 SeenRow(
                     network=src,

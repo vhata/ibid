@@ -73,6 +73,34 @@ class TestFactoid:
         replies = [t for _, _, t in src.sent]
         assert any(r == "howdy partner" for r in replies), replies
 
+    async def test_who_substitution(self, bot: BotFixture) -> None:
+        """``$who`` in a stored value should resolve to the speaker's nick."""
+        b, src = bot
+        async with b.db.session() as sess:
+            from ibid.plugins.factoid import Factoid, FactoidValue
+
+            f = Factoid(key="bye")
+            f.values.append(FactoidValue(verb="<reply>", value="cheers $who", author="t"))
+            sess.add(f)
+        src.sent.clear()
+        await src.inject("!bye?", nick="alice")
+        replies = [t for _, _, t in src.sent]
+        assert any("cheers alice" in r for r in replies), replies
+
+    async def test_dollar_literal_left_alone(self, bot: BotFixture) -> None:
+        """``$100`` (and other digit-led tokens) must NOT be substituted."""
+        b, src = bot
+        async with b.db.session() as sess:
+            from ibid.plugins.factoid import Factoid, FactoidValue
+
+            f = Factoid(key="prize")
+            f.values.append(FactoidValue(verb="<reply>", value="$100", author="t"))
+            sess.add(f)
+        src.sent.clear()
+        await src.inject("!prize?")
+        replies = [t for _, _, t in src.sent]
+        assert any(r == "$100" for r in replies), replies
+
     async def test_bare_lookup_silent_on_miss(self, bot: BotFixture) -> None:
         """A bare-key miss must NOT emit 'i don't know' (the ? form does)."""
         _, src = bot

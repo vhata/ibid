@@ -158,12 +158,13 @@ class Factoids(Plugin):
     async def _respond(self, event: Event, key: str, fact: Factoid) -> None:
         value = random.choice(list(fact.values))
         verb = value.verb
+        text = _substitute(value.value, event)
         if verb == "<reply>":
-            await event.reply(value.value, address=False)
+            await event.reply(text, address=False)
         elif verb == "<action>":
-            await event.action(value.value)
+            await event.action(text)
         else:
-            await event.reply(f"{key} {verb} {value.value}", address=False)
+            await event.reply(f"{key} {verb} {text}", address=False)
 
     @command("forget")
     async def forget(self, event: Event, args: str) -> None:
@@ -262,6 +263,60 @@ class Factoids(Plugin):
 
 def _norm(key: str) -> str:
     return " ".join(key.lower().split())
+
+
+# Match ``$word`` placeholders followed by a word boundary, case-insensitive
+# on the name. ``$100`` and other digit-led tokens are left alone — those
+# are real content (often Bash-script or dollar-amount), not placeholders.
+_PLACEHOLDER_RE = re.compile(r"\$([A-Za-z_]\w*)")
+
+
+def _substitute(value: str, event: Event) -> str:
+    """Replace ``$who``, ``$channel`` etc. with their runtime values.
+
+    Only known placeholders are substituted; unknown ``$name`` tokens are
+    left in place (since they're often factoid content, not requests).
+    """
+    if "$" not in value:
+        return value
+
+    now = utcnow()
+
+    def lookup(name_lower: str) -> str | None:
+        if name_lower == "who":
+            return event.nick
+        if name_lower == "channel":
+            return event.target
+        if name_lower == "date":
+            return now.strftime("%Y-%m-%d")
+        if name_lower == "time":
+            return now.strftime("%H:%M:%S")
+        if name_lower == "year":
+            return now.strftime("%Y")
+        if name_lower == "month":
+            return now.strftime("%B")
+        if name_lower == "day":
+            return now.strftime("%d")
+        if name_lower == "dow":
+            return now.strftime("%A")
+        if name_lower == "hour":
+            return now.strftime("%H")
+        if name_lower == "minute":
+            return now.strftime("%M")
+        if name_lower == "second":
+            return now.strftime("%S")
+        if name_lower == "unixtime":
+            return str(int(now.timestamp()))
+        if name_lower == "random":
+            return str(random.randint(0, 99))
+        return None
+
+    def replace(match: re.Match[str]) -> str:
+        name = match.group(1)
+        sub = lookup(name.lower())
+        return sub if sub is not None else match.group(0)
+
+    return _PLACEHOLDER_RE.sub(replace, value)
 
 
 PLUGINS = [Factoids]
