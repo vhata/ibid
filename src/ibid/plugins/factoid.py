@@ -22,7 +22,7 @@ from sqlalchemy import ForeignKey, String, Text, func, select
 from sqlalchemy.orm import Mapped, mapped_column, relationship, selectinload
 
 from ibid.db import Base
-from ibid.plugin import Plugin, command, match
+from ibid.plugin import Plugin, always, command, match
 from ibid.utils import utcnow
 
 if TYPE_CHECKING:
@@ -100,11 +100,47 @@ class Factoids(Plugin):
 
     @match(r"\?+\s*$", addressed=True)
     async def lookup(self, event: Event, _m: re.Match[str]) -> None:
-        """Match `X?` and reply with a stored value."""
+        """Match ``X?`` (explicit lookup) and reply with a stored value.
+
+        The ``?`` makes the request explicit, so we say "i don't know"
+        when there's no match — the user is asking a question.
+        """
         m = _LOOKUP_RE.match(event.text)
         if m is None:
             return
         key = _norm(m.group("key"))
+        hit = await self._fetch(event, key)
+        if hit is None:
+            await event.reply(f"i don't know about {key!r}")
+            return
+        await self._respond(event, key, hit)
+
+    @always(addressed=True)
+    async def bare_lookup(self, event: Event) -> None:
+        """If an addressed message matches a factoid key verbatim, fire it.
+
+        This is the legacy ibid behaviour that gave the bot its voice —
+        ``@Spinach hi`` finds the ``hi`` factoid. Unlike :meth:`lookup`,
+        a miss is silent: many addressed messages aren't lookups, and we
+        don't want to clutter the channel saying "i don't know" every time
+        the bot is mentioned.
+        """
+        text = event.text.strip()
+        # Skip messages that explicit handlers already own — the ``?`` form
+        # is covered by :meth:`lookup`, and command-shaped strings are too
+        # noisy to risk shadowing.
+        if not text or text.endswith("?") or "=" in text:
+            return
+        key = _norm(text)
+        # Skip overly-short bare strings (single chars) — too easy to collide.
+        if len(key) < 2:
+            return
+        hit = await self._fetch(event, key)
+        if hit is None:
+            return
+        await self._respond(event, key, hit)
+
+    async def _fetch(self, event: Event, key: str) -> Factoid | None:
         async with event.bot.db.session() as sess:
             fact = (
                 await sess.execute(
@@ -112,16 +148,22 @@ class Factoids(Plugin):
                 )
             ).scalar_one_or_none()
             if fact is None or not fact.values:
-                await event.reply(f"i don't know about {key!r}")
-                return
-            value = random.choice(list(fact.values))
-            verb = value.verb
-            if verb == "<reply>":
-                await event.reply(value.value, address=False)
-            elif verb == "<action>":
-                await event.action(value.value)
-            else:
-                await event.reply(f"{key} {verb} {value.value}", address=False)
+                return None
+            # The relationship is already loaded; we can hand the (detached)
+            # object back to the caller because we touched .values inside the
+            # session. Make sure the values list is realised first.
+            _ = list(fact.values)
+            return fact
+
+    async def _respond(self, event: Event, key: str, fact: Factoid) -> None:
+        value = random.choice(list(fact.values))
+        verb = value.verb
+        if verb == "<reply>":
+            await event.reply(value.value, address=False)
+        elif verb == "<action>":
+            await event.action(value.value)
+        else:
+            await event.reply(f"{key} {verb} {value.value}", address=False)
 
     @command("forget")
     async def forget(self, event: Event, args: str) -> None:
