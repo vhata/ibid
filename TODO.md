@@ -6,6 +6,19 @@ deleting, so we keep the audit trail.
 
 ## Open
 
+### systemd unit + install script for the Pi / VPS path
+
+The README's "Raspberry Pi / VPS" section currently only documents the
+Docker path. For users running from a native virtualenv on a Pi or VPS,
+ship a `contrib/ibid.service` systemd unit plus a `make install-system`
+target that drops it in place. Should:
+
+- Run as a dedicated `ibid` user
+- `WorkingDirectory=/opt/ibid` and `ExecStart=/opt/ibid/.venv/bin/ibid run`
+- Read `IBID_DISCORD_TOKEN` from `/etc/ibid/env` (mode 0600, owner ibid)
+- `Restart=on-failure`, `RestartSec=5s`
+- Put SQLite at `/var/lib/ibid/ibid.db`
+
 ### Discord: reply vs. message
 
 The Discord source currently sends every response via `channel.send(...)`,

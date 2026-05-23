@@ -6,8 +6,10 @@ Defaults are conservative — ``ibid.example.toml`` documents the full schema.
 
 from __future__ import annotations
 
+import os
 import tomllib
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -86,8 +88,29 @@ class Config(BaseModel):
 
     @classmethod
     def load(cls, path: str | Path) -> Config:
-        """Load and validate config from a TOML file."""
+        """Load and validate config from a TOML file.
+
+        Two environment-variable overrides are applied after TOML loading
+        so secrets and host-specific paths don't have to live in the file:
+
+          - ``IBID_DISCORD_TOKEN`` — sets ``[discord] token`` (creates the
+            ``[discord]`` block if the file didn't have one).
+          - ``IBID_DB_URL`` — overrides ``[bot] db_url``.
+        """
         p = Path(path)
         with p.open("rb") as fh:
-            raw = tomllib.load(fh)
+            raw: dict[str, Any] = tomllib.load(fh)
+        _apply_env_overrides(raw)
         return cls.model_validate(raw)
+
+
+def _apply_env_overrides(raw: dict[str, Any]) -> None:
+    discord_token = os.environ.get("IBID_DISCORD_TOKEN")
+    if discord_token:
+        section = raw.setdefault("discord", {})
+        section["token"] = discord_token
+
+    db_url = os.environ.get("IBID_DB_URL")
+    if db_url:
+        section = raw.setdefault("bot", {})
+        section["db_url"] = db_url
