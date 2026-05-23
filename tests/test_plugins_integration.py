@@ -58,6 +58,28 @@ class TestFactoid:
         replies = [t for _, _, t in src.sent]
         assert any(r == "hi there" for r in replies), replies
 
+    async def test_bare_lookup_matches_addressed_message(self, bot: BotFixture) -> None:
+        """Addressed messages that match a factoid key verbatim should fire."""
+        b, src = bot
+        async with b.db.session() as sess:
+            from ibid.plugins.factoid import Factoid, FactoidValue
+
+            f = Factoid(key="hi")
+            f.values.append(FactoidValue(verb="<reply>", value="howdy partner", author="t"))
+            sess.add(f)
+        src.sent.clear()
+        # No "?", no command — just an addressed bare word.
+        await src.inject("!hi")
+        replies = [t for _, _, t in src.sent]
+        assert any(r == "howdy partner" for r in replies), replies
+
+    async def test_bare_lookup_silent_on_miss(self, bot: BotFixture) -> None:
+        """A bare-key miss must NOT emit 'i don't know' (the ? form does)."""
+        _, src = bot
+        await src.inject("!some_unknown_thing_xyz")
+        replies = [t for _, _, t in src.sent]
+        assert not any("don't know" in r for r in replies), replies
+
 
 class TestKarma:
     async def test_increment_and_show(self, bot: BotFixture) -> None:
