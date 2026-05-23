@@ -1,0 +1,121 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ibid"
+version = "0.3.0"
+description = "Multi-channel async IRC bot — factoids, karma, memos, more"
+readme = "README.md"
+license = { file = "COPYING" }
+requires-python = ">=3.12"
+authors = [
+    { name = "Ibid Developers" },
+    { name = "Jonathan Hitchcock" },
+]
+keywords = ["irc", "bot", "chat", "factoid", "asyncio"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: AsyncIO",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Communications :: Chat :: Internet Relay Chat",
+]
+dependencies = [
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "sqlalchemy[asyncio]>=2.0",
+    "aiosqlite>=0.20",
+    "httpx>=0.27",
+    "selectolax>=0.3.21",
+    "tomli; python_version<'3.11'",
+    "discord.py>=2.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "types-aiofiles",
+]
+
+[project.scripts]
+ibid = "ibid.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/vhata/ibid"
+Repository = "https://github.com/vhata/ibid"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ibid"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/ibid",
+    "tests",
+    "README.md",
+    "COPYING",
+    "AUTHORS",
+    "ibid.example.toml",
+]
+exclude = ["legacy"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+extend-exclude = ["legacy"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",       # pycodestyle / pyflakes
+    "I",                  # isort
+    "UP",                 # pyupgrade
+    "B",                  # flake8-bugbear
+    "C4",                 # flake8-comprehensions
+    "SIM",                # flake8-simplify
+    "RUF",                # ruff
+    "ASYNC",              # async checks
+    "PTH",                # use pathlib
+    "TID",                # tidy imports
+]
+ignore = [
+    "E501",   # let formatter handle line length
+    "SIM117", # nested with statements are sometimes clearer
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011"]
+# fetch_title's ``timeout`` is a config knob applied via httpx, not a deadline.
+"src/ibid/plugins/urlinfo.py" = ["ASYNC109"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+warn_unused_ignores = true
+exclude = ["legacy/"]
+
+[[tool.mypy.overrides]]
+module = ["selectolax.*", "discord", "discord.*"]
+ignore_missing_imports = true
+
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra -q --strict-markers"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = [
+    "error",
+    # discord.py imports audioop which is deprecated in 3.13. Not our problem
+    # to fix — the upstream stdlib replacement landed in discord.py 2.5+.
+    "ignore:'audioop' is deprecated:DeprecationWarning",
+]
