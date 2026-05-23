@@ -1,1 +1,38 @@
 AUDIT.md
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.python-version
+build/
+dist/
+.venv/
+venv/
+
+# Tooling
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Editor
+.idea/
+.vscode/
+*.swp
+
+# Bot runtime
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+ibid.toml
+data/
+logs/
+
+# User-owned legacy data (kept locally for the importer, never committed)
+*.sql
+spinach-*
