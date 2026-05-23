@@ -200,6 +200,35 @@ class TestFactoid:
         replies = [t for _, _, t in src.sent]
         assert any("sky" in r for r in replies), replies
 
+    async def test_wildcard_basic(self, bot: BotFixture) -> None:
+        _, src = bot
+        # Using `greet` rather than `tell` to avoid colliding with the memo
+        # plugin's `tell` command word; the legacy ibid had a priority
+        # system that suppressed wildcards under commands, we don't.
+        await src.inject("!remember greet $arg is <reply>hello $arg")
+        src.sent.clear()
+        await src.inject("!greet alice")
+        replies = [t for _, _, t in src.sent]
+        assert any("hello alice" in r for r in replies), replies
+
+    async def test_wildcard_multiple_args(self, bot: BotFixture) -> None:
+        _, src = bot
+        await src.inject("!remember describe $arg as $arg is <reply>$arg2 describes $arg")
+        src.sent.clear()
+        await src.inject("!describe alice as smart")
+        replies = [t for _, _, t in src.sent]
+        assert any("smart describes alice" in r for r in replies), replies
+
+    async def test_wildcard_does_not_shadow_exact(self, bot: BotFixture) -> None:
+        _, src = bot
+        await src.inject("!remember greet $arg is <reply>wild")
+        await src.inject("!remember greet bob is <reply>specific")
+        src.sent.clear()
+        await src.inject("!greet bob")
+        replies = [t for _, _, t in src.sent]
+        # Exact match should win over the wildcard fallback.
+        assert any(r == "specific" for r in replies), replies
+
     async def test_bare_lookup_silent_on_miss_unique(self, bot: BotFixture) -> None:
         """A bare-key miss must NOT emit 'i don't know' (the ? form does)."""
         _, src = bot

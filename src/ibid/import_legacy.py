@@ -245,22 +245,32 @@ async def run_import(dump: Path, db_url: str, *, network: str = "legacy") -> dic
     names_for_factoid: dict[int, list[str]] = {}
     # factoid_id -> earliest creation time (used as the new Factoid's created_at)
     earliest_for_factoid: dict[int, datetime] = {}
+    is_wildcard_for_factoid: dict[int, bool] = {}
     for row in iter_table_rows(dump, "factoid_names"):
         # (id, name, factoid_id, identity_id, time, factpack, wild)
-        _, name, factoid_id, _identity_id, time_raw, _factpack, *_rest = row
+        _, name, factoid_id, _identity_id, time_raw, _factpack, wild = (
+            row[0],
+            row[1],
+            row[2],
+            row[3],
+            row[4],
+            row[5] if len(row) > 5 else None,
+            row[6] if len(row) > 6 else 0,
+        )
         if name is None:
             continue
-        key = str(name).strip().lower()[:200]
+        raw = str(name).strip()
+        # Legacy escapes: $arg -> _%; literal % -> \%; literal _ -> \_.
+        unescaped = raw.replace("_%", "$arg").replace("\\%", "%").replace("\\_", "_")
+        key = unescaped.lower()[:200]
         if not key:
-            continue
-        # Skip wild-pattern names (``_%``) — those need runtime substitution
-        # that the new schema doesn't model.
-        if "_%" in key or "%" in key.replace(r"\%", ""):
             continue
         fid = int(factoid_id)
         names_for_factoid.setdefault(fid, [])
         if key not in names_for_factoid[fid]:
             names_for_factoid[fid].append(key)
+        if bool(wild) or "$arg" in key:
+            is_wildcard_for_factoid[fid] = True
         t = _parse_dt(time_raw)
         if fid not in earliest_for_factoid or t < earliest_for_factoid[fid]:
             earliest_for_factoid[fid] = t
@@ -294,6 +304,7 @@ async def run_import(dump: Path, db_url: str, *, network: str = "legacy") -> dic
             fact = Factoid(
                 key=key,
                 created_at=earliest_for_factoid.get(fid, values[0][3]),
+                is_wildcard=is_wildcard_for_factoid.get(fid, "$arg" in key),
                 values=[],
             )
             for verb, val, author, t in values:
