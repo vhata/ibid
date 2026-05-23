@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from ibid.db import Database
-from ibid.plugins.factoid import Factoid, FactoidValue
+from ibid.plugins.factoid import Factoid, FactoidAlias, FactoidValue
 from ibid.plugins.karma import Karma
 from ibid.plugins.memo import Memo
 from ibid.plugins.seen import SeenRow
@@ -234,14 +234,15 @@ async def run_import(dump: Path, db_url: str, *, network: str = "legacy") -> dic
 
     # ---- factoids
     #
-    # Legacy schema lets a factoid_id carry multiple names ("hi"/"hello"/"hey"
-    # all pointing at one factoid) and the same name show up against
-    # multiple factoid_ids (different factoids that happened to collide).
-    # The new schema has one Factoid per unique key, so we accumulate the
-    # full value-set per name across every factoid_id that name appears in.
+    # Legacy: one factoid_id, many names (synonyms — "Bye"/"kbye"/"Night"
+    # all point at one factoid). The new schema mirrors this: each Factoid
+    # has a canonical ``key`` plus zero or more :class:`FactoidAlias` rows.
+    # If the legacy data has the same name on multiple factoid_ids
+    # (separate factoids that happened to collide on a string), we let the
+    # first claimant win — both ``key`` and ``alias`` are unique columns.
 
-    # name (lowercased) -> set of factoid_ids that carry this name
-    factoid_ids_for_name: dict[str, set[int]] = {}
+    # factoid_id -> [name1, name2, ...] in insertion order
+    names_for_factoid: dict[int, list[str]] = {}
     # factoid_id -> earliest creation time (used as the new Factoid's created_at)
     earliest_for_factoid: dict[int, datetime] = {}
     for row in iter_table_rows(dump, "factoid_names"):
@@ -257,7 +258,9 @@ async def run_import(dump: Path, db_url: str, *, network: str = "legacy") -> dic
         if "_%" in key or "%" in key.replace(r"\%", ""):
             continue
         fid = int(factoid_id)
-        factoid_ids_for_name.setdefault(key, set()).add(fid)
+        names_for_factoid.setdefault(fid, [])
+        if key not in names_for_factoid[fid]:
+            names_for_factoid[fid].append(key)
         t = _parse_dt(time_raw)
         if fid not in earliest_for_factoid or t < earliest_for_factoid[fid]:
             earliest_for_factoid[fid] = t
@@ -278,26 +281,22 @@ async def run_import(dump: Path, db_url: str, *, network: str = "legacy") -> dic
         )
 
     async with db.session() as sess:
-        for key, fids in factoid_ids_for_name.items():
-            # Merge all values from every factoid_id that carries this name.
-            merged: list[tuple[str, str, str | None, datetime]] = []
-            for fid in fids:
-                merged.extend(factoid_values_by_id.get(fid, []))
-            if not merged:
+        taken: set[str] = set()
+        for fid, names in names_for_factoid.items():
+            values = factoid_values_by_id.get(fid, [])
+            if not values:
                 continue
-            # Deduplicate identical (verb, value) pairs so synonyms-of-the-same-
-            # factoid don't get the value entered twice.
-            seen_pairs: set[tuple[str, str]] = set()
-            unique: list[tuple[str, str, str | None, datetime]] = []
-            for entry in merged:
-                pair = (entry[0], entry[1].strip().lower())
-                if pair in seen_pairs:
-                    continue
-                seen_pairs.add(pair)
-                unique.append(entry)
-            earliest = min(earliest_for_factoid.get(fid, unique[0][3]) for fid in fids)
-            fact = Factoid(key=key, created_at=earliest, values=[])
-            for verb, val, author, t in unique:
+            available = [n for n in names if n not in taken]
+            if not available:
+                continue
+            key = available[0]
+            taken.add(key)
+            fact = Factoid(
+                key=key,
+                created_at=earliest_for_factoid.get(fid, values[0][3]),
+                values=[],
+            )
+            for verb, val, author, t in values:
                 fact.values.append(
                     FactoidValue(
                         verb=verb[:16],
@@ -308,7 +307,12 @@ async def run_import(dump: Path, db_url: str, *, network: str = "legacy") -> dic
                     )
                 )
             sess.add(fact)
+            await sess.flush()
             stats["factoids"] += 1
+            for extra in available[1:]:
+                taken.add(extra)
+                sess.add(FactoidAlias(factoid_id=fact.id, alias=extra))
+                stats["factoids"] += 1  # count aliases as imported names too
 
     # ---- karma
     async with db.session() as sess:
