@@ -27,6 +27,14 @@ for reference and is no longer wired into the build.
   - `choose` — `choose a, b or c`, `coin`, `roll 2d20`
   - `url` — fetches `<title>` of pasted URLs
   - `core` — addressing, help, version
+  - `strings` — `hex`, `base64`, `rot13`, `md5`/`sha256`, `urlencode`, ...
+  - `ascii` — `figlet <text>` (ASCII art via pyfiglet)
+  - `insult` — `insult <person>` (Shakespearean abuse generator)
+  - `quotes` — `addquote`, `quote`, `searchquote`, `delquote`
+  - `convert` — `convert 5 miles to km`, `convert 100 USD to GBP`
+  - `geography` — `coords <place>`, `timezone <place>` (OSM Nominatim)
+  - `remind` — `remind me in 5 minutes about X` (survives restarts)
+  - `websearch` — `search <query>` (DuckDuckGo Instant Answer API)
 
 ## Quickstart (Discord)
 
