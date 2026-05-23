@@ -94,9 +94,13 @@ class RemindPlugin(Plugin):
         for t in self._tasks:
             t.cancel()
 
-    @command("remind", "ping", "alarm")
+    @command("remind", "alarm")
     async def remind(self, event: Event, args: str) -> None:
-        """remind <who> in/at <when> [about <what>] — schedule a reminder."""
+        """remind <who> in/at <when> [about <what>] — schedule a reminder.
+
+        The legacy ibid aliased ``ping`` to remind; the new core plugin
+        owns that as the trivial pong command, so it's not aliased here.
+        """
         m = _REMIND_RE.match(args)
         if m is None:
             await event.reply("usage: remind <who> in/at <when> [about <what>]")
